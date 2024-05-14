@@ -1,0 +1,154 @@
+{
+  "Comment": "Manage EC2 Instances 04",
+  "StartAt": "Call Holiday API",
+  "States": {
+    "Call Holiday API": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::http:invoke",
+      "Parameters": {
+        "ApiEndpoint": "https://s-proj.com/utils/checkHoliday.php",
+        "Method": "GET",
+        "Authentication": {
+          "ConnectionArn": "arn:aws:events:ap-northeast-1:XXXXXXXXXXXX:connection/holiday_api/XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX"
+        },
+        "QueryParameters": {
+          "kind": "h",
+          "date.$": "States.Format('{}{}{}', States.ArrayGetItem(States.StringSplit($$.Execution.StartTime, '-T'), 0), States.ArrayGetItem(States.StringSplit($$.Execution.StartTime, '-T'), 1), States.ArrayGetItem(States.StringSplit($$.Execution.StartTime, '-T'), 2))"
+        }
+      },
+      "Retry": [
+        {
+          "ErrorEquals": [
+            "States.ALL"
+          ],
+          "BackoffRate": 2,
+          "IntervalSeconds": 1,
+          "MaxAttempts": 3,
+          "JitterStrategy": "FULL"
+        }
+      ],
+      "Next": "HolidayJudgement",
+      "ResultSelector": {
+        "type.$": "$.ResponseBody"
+      }
+    },
+    "HolidayJudgement": {
+      "Type": "Choice",
+      "Choices": [
+        {
+          "Variable": "$.type",
+          "StringEquals": "holiday",
+          "Comment": "Holiday",
+          "Next": "Success"
+        }
+      ],
+      "Default": "DescribeInstances"
+    },
+    "DescribeInstances": {
+      "Type": "Task",
+      "Parameters": {
+        "Filters": [
+          {
+            "Name": "tag:Environment",
+            "Values": [
+              "development"
+            ]
+          },
+          {
+            "Name": "instance-state-name",
+            "Values": [
+              "stopped"
+            ]
+          }
+        ]
+      },
+      "Resource": "arn:aws:states:::aws-sdk:ec2:describeInstances",
+      "ResultSelector": {
+        "instanceIds.$": "$.Reservations[*].Instances[0].InstanceId"
+      },
+      "Next": "Choice"
+    },
+    "Choice": {
+      "Type": "Choice",
+      "Choices": [
+        {
+          "Not": {
+            "Variable": "$.instanceIds[0]",
+            "IsPresent": true
+          },
+          "Comment": "No instances to start",
+          "Next": "Success"
+        }
+      ],
+      "Default": "StartInstances"
+    },
+    "Success": {
+      "Type": "Succeed"
+    },
+    "StartInstances": {
+      "Type": "Task",
+      "Parameters": {
+        "InstanceIds.$": "$.instanceIds"
+      },
+      "Resource": "arn:aws:states:::aws-sdk:ec2:startInstances",
+      "Next": "Wait Default Time",
+      "ResultPath": null
+    },
+    "Wait Default Time": {
+      "Type": "Wait",
+      "Next": "Confirm to Stop",
+      "Seconds": 32400
+    },
+    "Confirm to Stop": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke.waitForTaskToken",
+      "Parameters": {
+        "FunctionName": "arn:aws:lambda:ap-northeast-1:XXXXXXXXXXXX:function:confirm_to_stop_ec2_instances:$LATEST",
+        "Payload": {
+          "message": "そろそろEC2インスタンスを停止する時間です。どうしましょう？",
+          "approve": "止めていいよ",
+          "reject": "まだ使う！",
+          "taskToken.$": "$$.Task.Token"
+        }
+      },
+      "Retry": [
+        {
+          "ErrorEquals": [
+            "Lambda.ServiceException",
+            "Lambda.AWSLambdaException",
+            "Lambda.SdkClientException",
+            "Lambda.TooManyRequestsException"
+          ],
+          "IntervalSeconds": 1,
+          "MaxAttempts": 3,
+          "BackoffRate": 2
+        }
+      ],
+      "Next": "StopInstances",
+      "Catch": [
+        {
+          "ErrorEquals": [
+            "States.ALL"
+          ],
+          "Next": "Wait Additional Time",
+          "Comment": "rejected",
+          "ResultPath": null
+        }
+      ],
+      "ResultPath": null
+    },
+    "StopInstances": {
+      "Type": "Task",
+      "Parameters": {
+        "InstanceIds.$": "$.instanceIds"
+      },
+      "Resource": "arn:aws:states:::aws-sdk:ec2:stopInstances",
+      "End": true
+    },
+    "Wait Additional Time": {
+      "Type": "Wait",
+      "Seconds": 3600,
+      "Next": "Confirm to Stop"
+    }
+  }
+}

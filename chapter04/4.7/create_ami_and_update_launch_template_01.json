@@ -1,0 +1,76 @@
+{
+  "Comment": "Create AMI and Update LaunchTemplate",
+  "StartAt": "Get DateTime",
+  "States": {
+    "Get DateTime": {
+      "Type": "Pass",
+      "Next": "CreateImage",
+      "ResultPath": "$.dateTime",
+      "Parameters": {
+        "date.$": "States.ArrayGetItem(States.StringSplit($$.Execution.StartTime, 'TZ'), 0)",
+        "time.$": "States.ArrayGetItem(States.StringSplit($$.Execution.StartTime, 'TZ'), 1)"
+      }
+    },
+    "CreateImage": {
+      "Type": "Task",
+      "Parameters": {
+        "InstanceId.$": "$.instanceId",
+        "Name.$": "States.Format('{}_{}_{}-{}-{}', $.baseName, $.dateTime.date, States.ArrayGetItem(States.StringSplit($.dateTime.time, ':.'), 0), States.ArrayGetItem(States.StringSplit($.dateTime.time, ':.'), 1), States.ArrayGetItem(States.StringSplit($.dateTime.time, ':.'), 2))",
+        "NoReboot": true
+      },
+      "Resource": "arn:aws:states:::aws-sdk:ec2:createImage",
+      "Next": "Wait",
+      "ResultPath": "$.createImage"
+    },
+    "Wait": {
+      "Type": "Wait",
+      "Next": "DescribeImages",
+      "Seconds": 10
+    },
+    "DescribeImages": {
+      "Type": "Task",
+      "Next": "Check Job State",
+      "Parameters": {
+        "ImageIds.$": "States.Array($.createImage.ImageId)"
+      },
+      "Resource": "arn:aws:states:::aws-sdk:ec2:describeImages",
+      "ResultSelector": {
+        "state.$": "$.Images[0].State"
+      },
+      "ResultPath": "$.describeImages"
+    },
+    "Check Job State": {
+      "Type": "Choice",
+      "Choices": [
+        {
+          "Variable": "$.describeImages.state",
+          "StringEquals": "available",
+          "Comment": "available",
+          "Next": "CreateLaunchTemplateVersion"
+        },
+        {
+          "Variable": "$.describeImages.state",
+          "StringEquals": "pending",
+          "Comment": "pending",
+          "Next": "Wait"
+        }
+      ],
+      "Default": "Fail"
+    },
+    "CreateLaunchTemplateVersion": {
+      "Type": "Task",
+      "Parameters": {
+        "LaunchTemplateId.$": "$.launchTemplateId",
+        "SourceVersion": "$Latest",
+        "LaunchTemplateData": {
+          "ImageId.$": "$.createImage.ImageId"
+        }
+      },
+      "Resource": "arn:aws:states:::aws-sdk:ec2:createLaunchTemplateVersion",
+      "End": true
+    },
+    "Fail": {
+      "Type": "Fail"
+    }
+  }
+}

@@ -1,0 +1,155 @@
+{
+  "Comment": "Rekognize Image",
+  "StartAt": "Parallel",
+  "States": {
+    "Parallel": {
+      "Type": "Parallel",
+      "Branches": [
+        {
+          "StartAt": "DetectLabels",
+          "States": {
+            "DetectLabels": {
+              "Type": "Task",
+              "Parameters": {
+                "Image": {
+                  "S3Object": {
+                    "Bucket.$": "$.detail.bucket.name",
+                    "Name.$": "$.detail.object.key"
+                  }
+                },
+                "Features": [
+                  "GENERAL_LABELS"
+                ]
+              },
+              "Resource": "arn:aws:states:::aws-sdk:rekognition:detectLabels",
+              "ResultSelector": {
+                "labels.$": "$.Labels[0:5].Name"
+              },
+              "Next": "Check Labels Empty"
+            },
+            "Check Labels Empty": {
+              "Type": "Choice",
+              "Choices": [
+                {
+                  "Not": {
+                    "Variable": "$.labels[0]",
+                    "IsPresent": true
+                  },
+                  "Comment": "Empty",
+                  "Next": "Output Empty Labels"
+                }
+              ],
+              "Default": "Success DetectLabels"
+            },
+            "Output Empty Labels": {
+              "Type": "Pass",
+              "End": true,
+              "Result": {
+                "labels": [
+                  ""
+                ],
+                "labelNum": 0
+              }
+            },
+            "Success DetectLabels": {
+              "Type": "Succeed"
+            }
+          }
+        },
+        {
+          "StartAt": "DetectText",
+          "States": {
+            "DetectText": {
+              "Type": "Task",
+              "Parameters": {
+                "Image": {
+                  "S3Object": {
+                    "Bucket.$": "$.detail.bucket.name",
+                    "Name.$": "$.detail.object.key"
+                  }
+                }
+              },
+              "Resource": "arn:aws:states:::aws-sdk:rekognition:detectText",
+              "ResultSelector": {
+                "texts.$": "$.TextDetections[?(@.Type == LINE)].DetectedText"
+              },
+              "Next": "Check Texts Empty"
+            },
+            "Check Texts Empty": {
+              "Type": "Choice",
+              "Choices": [
+                {
+                  "Not": {
+                    "Variable": "$.texts[0]",
+                    "IsPresent": true
+                  },
+                  "Comment": "Empty",
+                  "Next": "Output Empty Texts"
+                }
+              ],
+              "Default": "Success DetectText"
+            },
+            "Output Empty Texts": {
+              "Type": "Pass",
+              "End": true,
+              "Result": {
+                "texts": [
+                  ""
+                ],
+                "textNum": 0
+              }
+            },
+            "Success DetectText": {
+              "Type": "Succeed"
+            }
+          }
+        },
+        {
+          "StartAt": "DetectFaces",
+          "States": {
+            "DetectFaces": {
+              "Type": "Task",
+              "End": true,
+              "Parameters": {
+                "Image": {
+                  "S3Object": {
+                    "Bucket.$": "$.detail.bucket.name",
+                    "Name.$": "$.detail.object.key"
+                  }
+                }
+              },
+              "Resource": "arn:aws:states:::aws-sdk:rekognition:detectFaces",
+              "ResultSelector": {
+                "faceNum.$": "States.ArrayLength($.FaceDetails)"
+              }
+            }
+          }
+        }
+      ],
+      "Next": "DynamoDB PutItem",
+      "ResultPath": "$.result"
+    },
+    "DynamoDB PutItem": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::dynamodb:putItem",
+      "Parameters": {
+        "TableName": "ImageRekognizeResult",
+        "Item": {
+          "objectKey": {
+            "S.$": "$.detail.object.key"
+          },
+          "labels": {
+            "SS.$": "$.result[0].labels"
+          },
+          "texts": {
+            "SS.$": "$.result[1].texts"
+          },
+          "faceNum": {
+            "N.$": "States.Format('{}', $.result[2].faceNum)"
+          }
+        }
+      },
+      "End": true
+    }
+  }
+}

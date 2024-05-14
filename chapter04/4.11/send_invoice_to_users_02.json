@@ -1,0 +1,74 @@
+{
+  "Comment": "Send Invoice to Users 02",
+  "StartAt": "Scan",
+  "States": {
+    "Scan": {
+      "Type": "Task",
+      "Parameters": {
+        "TableName": "Users"
+      },
+      "Resource": "arn:aws:states:::aws-sdk:dynamodb:scan",
+      "Next": "Map",
+      "OutputPath": "$.Items"
+    },
+    "Map": {
+      "Type": "Map",
+      "ItemProcessor": {
+        "ProcessorConfig": {
+          "Mode": "DISTRIBUTED",
+          "ExecutionType": "STANDARD"
+        },
+        "StartAt": "Lambda Invoke",
+        "States": {
+          "Lambda Invoke": {
+            "Type": "Task",
+            "Resource": "arn:aws:states:::lambda:invoke",
+            "OutputPath": "$.Payload",
+            "Parameters": {
+              "FunctionName": "arn:aws:lambda:ap-northeast-1:XXXXXXXXXXXX:function:batch_send_invoices:$LATEST",
+              "Payload.$": "$"
+            },
+            "Retry": [
+              {
+                "ErrorEquals": [
+                  "Lambda.ServiceException",
+                  "Lambda.AWSLambdaException",
+                  "Lambda.SdkClientException",
+                  "Lambda.TooManyRequestsException"
+                ],
+                "IntervalSeconds": 1,
+                "MaxAttempts": 3,
+                "BackoffRate": 2
+              }
+            ],
+            "End": true
+          }
+        }
+      },
+      "Next": "SNS Publish",
+      "Label": "Map",
+      "MaxConcurrency": 1000,
+      "ItemBatcher": {
+        "MaxItemsPerBatch": 10
+      },
+      "ResultSelector": {
+        "result.$": "$[*][*]"
+      },
+      "OutputPath": "$.result"
+    },
+    "SNS Publish": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::sns:publish",
+      "Parameters": {
+        "TopicArn": "arn:aws:sns:ap-northeast-1:XXXXXXXXXXXX:notify_sending_invoices_result",
+        "Message": {
+          "totalNum.$": "States.ArrayLength($)",
+          "successNum.$": "States.ArrayLength($[?(@.result == true)])",
+          "failureNum.$": "States.ArrayLength($[?(@.result == false)])",
+          "failedUserIds.$": "$[?(@.result == false)].id"
+        }
+      },
+      "End": true
+    }
+  }
+}

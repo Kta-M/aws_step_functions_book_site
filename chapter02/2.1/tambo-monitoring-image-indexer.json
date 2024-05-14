@@ -1,0 +1,72 @@
+{
+  "Comment": "Validate the image file and generate an index for the file.",
+  "StartAt": "Validation",
+  "States": {
+    "Validation": {
+      "Type": "Choice",
+      "Choices": [
+        {
+          "Variable": "$.detail.object.size",
+          "NumericEquals": 0,
+          "Next": "DeleteObject",
+          "Comment": "Empty"
+        },
+        {
+          "Not": {
+            "Variable": "$.detail.object.key",
+            "StringMatches": "[a-zA-Z0-9]+/\\\\d{4}/\\\\d{2}/\\\\d{2}/\\\\d{2}_\\\\d{2}_\\\\d{2}.jpg"
+          },
+          "Comment": "InvalidObjectKey",
+          "Next": "DeleteObject"
+        }
+      ],
+      "Default": "DynamoDB PutItem"
+    },
+    "DeleteObject": {
+      "Type": "Task",
+      "Next": "PutMetricData",
+      "Parameters": {
+        "Bucket.$": "$.detail.bucket.name",
+        "Key.$": "$.detail.object.key"
+      },
+      "Resource": "arn:aws:states:::aws-sdk:s3:deleteObject"
+    },
+    "PutMetricData": {
+      "Type": "Task",
+      "Parameters": {
+        "MetricData": [
+          {
+            "MetricName": "InvalidImage",
+            "Value": 1,
+            "Unit": "Count"
+          }
+        ],
+        "Namespace": "TamboMonitoringImages"
+      },
+      "Resource": "arn:aws:states:::aws-sdk:cloudwatch:putMetricData",
+      "End": true
+    },
+    "DynamoDB PutItem": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::dynamodb:putItem",
+      "Parameters": {
+        "TableName": "TamboMonitoringImagesIndex",
+        "Item": {
+          "tamboId": {
+            "S.$": "States.ArrayGetItem(States.StringSplit($.detail.object.key, '/.'), 0)"
+          },
+          "timestamp": {
+            "S.$": "States.Format('{}_{}_{}_{}', States.ArrayGetItem(States.StringSplit($.detail.object.key, '/'), 1), States.ArrayGetItem(States.StringSplit($.detail.object.key, '/.'), 2), States.ArrayGetItem(States.StringSplit($.detail.object.key, '/.'), 3), States.ArrayGetItem(States.StringSplit($.detail.object.key, '/.'), 4))"
+          },
+          "objectKey": {
+            "S.$": "$.detail.object.key"
+          },
+          "createdAt": {
+            "S.$": "$.time"
+          }
+        }
+      },
+      "End": true
+    }
+  }
+}
